@@ -3266,6 +3266,8 @@ const REGIONS_EXT=[
 const DEX=ASSETS.dex,MOVES=ASSETS.moves;
 const nameOf=k=>DEX[k]?DEX[k].n:k;
 const typesOf=k=>DEX[k]?DEX[k].t:['Normal'];
+// (in battle: a type changed by CAMOUFLAGE or CONVERSION lasts until the POKéMON is switched out or the battle ends)
+const monTypes=p=>(p&&p.typeOvr)||typesOf(p&&p.k);
 
 /* ---------- Gen 3 type chart (attack -> defender multipliers) ---------- */
 const TYPE_CHART=(()=>{
@@ -7650,9 +7652,9 @@ function calcDamage(a,d,m){
   const pw=movePower(m,a,d);
   let dmg=Math.floor(Math.floor(Math.floor(2*a.p.lv/5+2)*pw*A/D)/50)+2;
   if(crit)dmg*=2;
-  if(m!=='struggle'&&typesOf(a.p.k).includes(M.t))dmg=Math.floor(dmg*1.5);
+  if(m!=='struggle'&&monTypes(a.p).includes(M.t))dmg=Math.floor(dmg*1.5);
   if(typeof charmBoost==='function')dmg=Math.floor(dmg*charmBoost(a.side,M.t));
-  const eff=m==='struggle'?1:typeMult(M.t,typesOf(d.p.k));dmg=Math.floor(dmg*eff);dmg=Math.floor(dmg*weatherMul(M.t));
+  const eff=m==='struggle'?1:typeMult(M.t,monTypes(d.p));dmg=Math.floor(dmg*eff);dmg=Math.floor(dmg*weatherMul(M.t));
   dmg=Math.floor(dmg*(85+Math.floor(Math.random()*16))/100);
   {const S=battle&&battle.screens&&battle.screens[d.side];if(S&&!crit&&(phys?S.phys:S.spec)>0)dmg=Math.floor(dmg/2);}
   if(eff>0)dmg=Math.max(1,dmg);
@@ -7687,7 +7689,7 @@ function fixedKind(m){const M=MOVES[m];if(!M)return null;
   if(OHKO.has(m))return 'ohko';if(m==='seismictoss'||m==='nightshade'||M.sp==='nightshade')return 'level';if(m==='psywave')return 'psywave';
   if(m==='superfang'||M.sp==='superfang')return 'half';if(M.sp==='sonicboom')return 'sonic';if(M.sp==='dragonrage')return 'rage40';if(M.sp==='endeavor')return 'endeavor';return null;}
 function fixedDmg(a,d,m,est){
-  const k=fixedKind(m),T=typesOf(d.p.k),M=MOVES[m];if(!k)return null;
+  const k=fixedKind(m),T=monTypes(d.p),M=MOVES[m];if(!k)return null;
   const immune=typeMult(M.t,T)===0;
   const dmg=k==='ohko'?(a.p.lv>=d.p.lv?d.p.hp:0):k==='level'?a.p.lv:k==='psywave'?Math.max(1,Math.floor(a.p.lv*(est?1:0.5+Math.random()))):
     k==='half'?Math.max(1,Math.floor(d.p.hp/2)):k==='sonic'?20:k==='rage40'?40:Math.max(0,d.p.hp-a.p.hp);
@@ -7712,14 +7714,14 @@ function moveGap(f){return gapBase(f)*rnd(0.85,1.1);}
    almost ready and what's left is poor, it waits for it. */
 function estDamage(a,d,m){
   const M=MOVES[m];if(!isDmgMove(m))return 0;
-  const T=typesOf(d.p.k);
+  const T=monTypes(d.p);
   {const fx=fixedDmg(a,d,m,true);if(fx)return fx.dmg*(fixedKind(m)==='ohko'?0.3:1);}
   const phys=isPhys(m);
   let A=(phys?a.p.st.atk:a.p.st.spa)*stageMul(phys?a.stage.atk:a.stage.spa),D=(phys?d.p.st.def:d.p.st.spd)*stageMul(phys?d.stage.def:d.stage.spd);
   if(phys&&a.p.status==='BRN')A*=0.5;
   const pw=m==='magnitude'?71:movePower(m,a,d);
   let dmg=Math.floor(Math.floor(2*a.p.lv/5+2)*pw*A/D)/50+2;
-  if(m!=='struggle'&&typesOf(a.p.k).includes(M.t))dmg*=1.5;
+  if(m!=='struggle'&&monTypes(a.p).includes(M.t))dmg*=1.5;
   dmg*=m==='struggle'?1:typeMult(M.t,T);dmg*=weatherMul(M.t);
   const cs=Math.min(4,(M.cr?1:0)+(a.vol.focus?2:0));dmg*=1+[1/16,1/8,1/4,1/3,1/2][cs];
   if(M.hit)dmg*=M.hit[0]===M.hit[1]?M.hit[0]:3;
@@ -7728,7 +7730,7 @@ function estDamage(a,d,m){
 function accOf(a,d,m){const M=MOVES[m];if(!M||!M.a)return 1;return Math.min(1,M.a/100*accMul(clamp(a.stage.acc-d.stage.eva,-6,6)));}
 function bestDmg(a,d,kind){let b=0;for(const m of a.p.moves){const M=MOVES[m];if(!M||ppOf(a.p,m)<=0||!isDmgMove(m))continue;const ph=isPhys(m);if(kind==='phys'&&!ph)continue;if(kind==='spec'&&ph)continue;b=Math.max(b,estDamage(a,d,m)*accOf(a,d,m));}return b;}
 function moveValue(f,o,m){
-  const M=MOVES[m],S=sty(f),T=typesOf(o.p.k);
+  const M=MOVES[m],S=sty(f),T=monTypes(o.p);
   const myBest=Math.max(0.5,bestDmg(f,o)),foeBest=bestDmg(o,f);
   const toKO=Math.max(1,Math.ceil(o.p.hp/myBest)),toDie=foeBest>0?Math.max(1,Math.ceil(f.p.hp/foeBest)):9;
   const horizon=Math.min(toKO,toDie,5),turn=gapBase(f)+0.9,acc=accOf(f,o,m),later=Math.max(0,horizon-1),soon=Math.max(0,horizon-0.5);
@@ -7795,7 +7797,7 @@ function specialValue(f,o,m,M,horizon,soon,acc,foeBest){
   if(sp==='disable')return o.usedMove&&isDmgMove(o.usedMove)?14:0;
   if(sp==='yawn')return o.p.status||o.vol.yawn?0:acc*(25+12*Math.min(3,horizon));
   if(M.ail==='INFAT')return o.vol.infat>0?0:acc*(14+10*Math.min(3,horizon));
-  if(sp==='curse')return typesOf(f.p.k).includes('Ghost')?(o.vol.curse||hpf<0.55?0:45):(f.stage.atk<4?22:0);
+  if(sp==='curse')return monTypes(f.p).includes('Ghost')?(o.vol.curse||hpf<0.55?0:45):(f.stage.atk<4?22:0);
   if(sp==='bellydrum')return hpf>0.65&&f.stage.atk<4?70:0;
   if(sp==='aromatherapy'||sp==='healbell')return f.p.status?40:0;
   if(sp==='endure')return hpf<0.3?18:0;
@@ -7813,7 +7815,7 @@ function specialValue(f,o,m,M,horizon,soon,acc,foeBest){
 function cantTouch(f){
   const B=battle,foes=(B?[B.foe,B.foe2,B.me,B.me2]:[]).filter(x=>x&&x.alive&&x.side!==f.side);if(!foes.length)return false;
   // (status and stat moves don't count: they never end a battle on their own)
-  return !f.p.moves.some(m=>{const M=MOVES[m];return !!M&&isDmgMove(m)&&foes.some(x=>typeMult(M.t,typesOf(x.p.k))>0&&!(m==='dreameater'&&x.p.status!=='SLP'));});
+  return !f.p.moves.some(m=>{const M=MOVES[m];return !!M&&isDmgMove(m)&&foes.some(x=>typeMult(M.t,monTypes(x.p))>0&&!(m==='dreameater'&&x.p.status!=='SLP'));});
 }
 function chooseMove(f){
   const o=other(f),all=f.p.moves.filter(m=>MOVES[m]&&ppOf(f.p,m)>0);
@@ -7950,7 +7952,7 @@ function updateFighter(f,dt){
   f.st+=dt;
   const bound=f.vol.trap&&f.vol.trap.t>0;
   if(f.state==='hurt'){const d=Math.pow(0.08,dt);f.vx*=d;f.vz*=d;integrate(f,dt);wallBounce(f);if(f.st>(f.hurtT||0.32)&&f.y<=0){f.state='idle';f.st=0;f.anim=null;}return;}
-  if(f.p.status==='SLP'||f.p.status==='FRZ'){f.vx*=0.8;f.vz*=0.8;integrate(f,dt);return;}
+  if((f.p.status==='SLP'||f.p.status==='FRZ')&&!(f.state==='act'&&f.sleepAct)){f.vx*=0.8;f.vz*=0.8;integrate(f,dt);if(f.p.status==='SLP'&&typeof sleepMove==='function')sleepMove(f,dt);return;}   // (SLEEP TALK / SNORE act in their sleep)
   if(f.state==='act'){if(!f.act||f.act.update(dt))endAct(f);return;}
   if(f.dodgeT>0){f.dodgeT-=dt;const d=Math.pow(0.03,dt);f.vx*=d;f.vz*=d;integrate(f,dt);if(f.dodgeT<=0&&f.dodgeAct){f.dodgeAct=false;setOpen(f,0.4);}return;}
   if(!o||!o.out||!o.alive){
@@ -8523,7 +8525,7 @@ function applyHit(f,o,m,quietLog,mult){
   if(m==='defensecurl')f.vol.curl=1;
   if(m==='protect'){f.vol.protect=1.4;blog(`${foeName(f)} is protecting itself!`);}
   if(m==='mudsport')blog('Electricity\'s power was weakened!');
-  if(m==='sandstorm'){B.sand=10;blog('A sandstorm brewed!');}
+  if(m==='sandstorm'){B.wx={k:'sand',t:15};B.sand=15;B.rain=false;blog('A sandstorm kicked up!');}   // (weather now: it hurts, 74_moves_more.js)
   if((m==='whirlwind'||m==='roar')&&o.alive){const d=Math.max(dist(f,o),0.01);o.vx+=(o.x-f.x)/d*7;o.vz+=(o.z-f.z)/d*7;}
   moveSpecial(f,o,m,M,selfMove);
 }
@@ -8554,7 +8556,7 @@ function moveSpecial(f,o,m,M,selfMove){
   }
   else if(sp==='bellydrum'){if(f.p.hp<=f.p.st.hp/2||f.stage.atk>=6){fail();return;}hurt(f,Math.floor(f.p.st.hp/2),null,true);f.stage.atk=6;blog(`${nm} cut its own HP and maximized ATTACK!`);}
   else if(sp==='curse'){
-    if(typesOf(f.p.k).includes('Ghost')){if(o.vol.curse){fail();return;}hurt(f,Math.max(1,Math.floor(f.p.st.hp/2)),null,true);o.vol.curse=1;blog(`${nm} cut its own HP and laid a curse on ${foeName(o)}!`);}
+    if(monTypes(f.p).includes('Ghost')){if(o.vol.curse){fail();return;}hurt(f,Math.max(1,Math.floor(f.p.st.hp/2)),null,true);o.vol.curse=1;blog(`${nm} cut its own HP and laid a curse on ${foeName(o)}!`);}
     else{statChange(f,'spe',-1);statChange(f,'atk',1);statChange(f,'def',1);}
   }
   else if(sp==='aromatherapy'||sp==='healbell'){if(f.p.status){f.p.status=null;blog(`${nm}'s status returned to normal!`);}else blog('A soothing aroma wafted through the area!');}
@@ -8591,7 +8593,7 @@ function statChange(w,k,dv){
 }
 function inflict(f,o,m,ail){
   if(ail==='INFAT'||ail==='DISABLE')return;   // (ATTRACT and DISABLE work through their own effects: they're not a status)
-  const T=typesOf(o.p.k),nm=foeName(o),tox=ail==='TOX';if(tox)ail='PSN';   // (TOXIC: a poison that grows worse each time)
+  const T=monTypes(o.p),nm=foeName(o),tox=ail==='TOX';if(tox)ail='PSN';   // (TOXIC: a poison that grows worse each time)
   if(f!==o&&battle.screens&&battle.screens[o.side].safe>0&&ail!=='TRAP'){blog(`${nm} is protected by SAFEGUARD!`);return;}
   if(ail==='TRAP'){if(o.vol.trap)return;o.vol.trap={t:rnd(3,5.5),tick:1.6,m,src:f};blog(m==='bind'?`${nm} was squeezed by ${foeName(f)}'s BIND!`:`${nm} became trapped in the vortex!`);return;}
   if(ail==='SEED'){if(o.vol.seed)return;if(T.includes('Grass')){blog(`It doesn't affect ${nm}…`);return;}o.vol.seed=f;blog(`${nm} was seeded!`);return;}
@@ -8785,7 +8787,7 @@ async function doCommand(c){
       if(k>=0){const p=SAVE.party[k];
         if(inBattle(p))await say([`${monName(p)} is already in battle!`]);
         else if(p.hp<=0)await say([`There's no will to fight!`]);
-        else if(out.vol.trap)await say([`${monName(out.p)} can't be recalled!`]);
+        else if(out.vol.trap||out.vol.block)await say([`${monName(out.p)} can't be recalled!`]);
         else{const o=other(out),tag=!!(o&&o.alive&&(o.open>0||out.open>0));if(B.struggle)endStruggle(null,true);B.phase='event';B.paused=false;
           const slot=out.slot||0;await recall(out);clearSlot(out);const nf=await sendOut(0,p,undefined,slot);settleSlots();renderMoves();B.phase='fight';if(tag)tagIn(nf);}
       }
@@ -8793,7 +8795,7 @@ async function doCommand(c){
       if(B.kind!=='wild'){await say([`No! There's no running from a\nTRAINER battle!`]);}
       else{
         B.runTries++;const a=effSpe(B.me),b=effSpe(B.foe);
-        const ok=(typeof heldOf==='function'&&heldOf(B.me.p)==='smokeball')||B.foe.open>0||B.foe.fleeing||a>=b||Math.random()*256<Math.floor(a*128/Math.max(1,b))+30*B.runTries;
+        const smoke=typeof heldOf==='function'&&heldOf(B.me.p)==='smokeball',ok=smoke||(!(B.me&&B.me.vol.block)&&(B.foe.open>0||B.foe.fleeing||a>=b||Math.random()*256<Math.floor(a*128/Math.max(1,b))+30*B.runTries));   // (MEAN LOOK / BLOCK: no running, bar a SMOKE BALL)
         if(ok){sfx.whoosh();await say(['Got away safely!']);B.result='run';B.paused=false;B.busy=false;endBattle();return;}
         else{B.paused=false;blog("Can't escape!");sfx.bump();}
       }
@@ -9480,7 +9482,7 @@ function tryStruggle(f,o,m){
 }
 function strugglePow(f,m,mo){
   const M=MOVES[m],phys=isPhys(m),A=phys?f.p.st.atk*stageMul(f.stage.atk):f.p.st.spa*stageMul(f.stage.spa);
-  return Math.max(0.15,A*(M.p||40)*(typesOf(f.p.k).includes(M.t)?1.5:1)*Math.max(0.25,typeMult(M.t,[MOVES[mo].t]))*weatherMul(M.t)*(0.55+0.45*f.p.hp/f.p.st.hp));
+  return Math.max(0.15,A*(M.p||40)*(monTypes(f.p).includes(M.t)?1.5:1)*Math.max(0.25,typeMult(M.t,[MOVES[mo].t]))*weatherMul(M.t)*(0.55+0.45*f.p.hp/f.p.st.hp));
 }
 const STREAM={Fire:[[0xff5a20,0xffa030,0xfff0a0],0.32,0],Water:[[0x4890f0,0xd8f0ff,0x6ab0ff],0.18,1],Electric:[[0xffe040,0xffffff],0.24,0],Psychic:[[0xff70c0,0x80e0ff,0xf8f080],0.26,0],
   Grass:[[0x6ad858,0xc8f0a0],0.15,1],Bug:[[0xb8d840,0xffffff],0.18,0],Poison:[[0xc060e0,0x8040b0],0.16,1],Flying:[[0xe8f4ff,0xffffff],0.2,0]};
@@ -9667,14 +9669,14 @@ function fighterPlus(f,dt){
   }
   // wild POKéMON on their last legs try to escape
   if(B.kind==='wild'&&f.side===1&&!B.opts.demo&&!B.opts.noFlee&&o&&o.alive){
-    if(!f.fleeing&&!f.fled&&f.p.hp<=f.p.st.hp*0.25&&!bound&&!asleep&&f.state==='idle'&&Math.random()<dt*({cautious:0.6,evasive:0.6,balanced:0.4,steady:0.3,erratic:0.45,aggressive:0.2,reckless:0.08}[f.style]||0.3)){
+    if(!f.fleeing&&!f.fled&&f.p.hp<=f.p.st.hp*0.25&&!bound&&!asleep&&!f.vol.block&&f.state==='idle'&&Math.random()<dt*({cautious:0.6,evasive:0.6,balanced:0.4,steady:0.3,erratic:0.45,aggressive:0.2,reckless:0.08}[f.style]||0.3)){
       f.fleeing=true;f.fled=true;f.plan=null;f.called=null;blog(`The wild ${monName(f.p)} is trying to run away!`);popText(f.x,1.4+f.rad,f.z,'!','word');toast('Finish it or throw a POKé BALL!');}
-    if(f.fleeing&&(bound||asleep))f.fleeing=false;
+    if(f.fleeing&&(bound||asleep||f.vol.block))f.fleeing=false;
     if(f.fleeing&&f.state==='idle'){const I=B.inner,[gx,gz]=fleeGoal(f);if(Math.hypot(f.x-gx,f.z-gz)<0.35||f.x<=I[0]+f.rad*0.5+0.05||f.x>=I[2]-f.rad*0.5-0.05)escapeWild(f);}
   }
   // standing in flames hurts
   if(B.patches&&B.patches.length&&f.y<0.3){let burn=false;for(const P of B.patches)if(P.kind==='fire'&&Math.hypot(P.x-f.x,P.z-f.z)<P.r)burn=true;
-    if(burn&&!typesOf(f.p.k).includes('Fire')){f.burnTick-=dt;if(f.burnTick<=0){f.burnTick=1;const d=Math.max(1,Math.floor(f.p.st.hp/16));hurt(f,d,null,true);
+    if(burn&&!monTypes(f.p).includes('Fire')){f.burnTick-=dt;if(f.burnTick<=0){f.burnTick=1;const d=Math.max(1,Math.floor(f.p.st.hp/16));hurt(f,d,null,true);
       if(!f.burnLogged){f.burnLogged=true;blog(`${foeName(f)} is hurt by the flames!`);}if(f.state==='idle'&&f.y<=0){f.vy=2.4;}FX.burst(f.x,0.3,f.z,8,{col:[0xff7030,0xffc040],size:0.12,speed:1.5,life:0.4,up:2});}}
     else f.burnTick=0.2;}
 }
@@ -9806,6 +9808,8 @@ function battleEndPlus(B){
   for(const p of SAVE.party){if(!B.part.has(p.id))continue;const r=recOf(p);r.battles++;if(won&&p.lowSeen)r.comebacks++;}
   for(const p of SAVE.party){delete p.spirit;delete p.lowSeen;}
   for(const p of SAVE.party.concat(B.foes||[]))if(p.mimicked){for(const i in p.mimicked)p.moves[i]=p.mimicked[i];delete p.mimicked;}   // (MIMIC's copy only lasts the battle)
+  for(const p of SAVE.party.concat(B.foes||[])){delete p.typeOvr;delete p.lastEaten;}   // (CAMOUFLAGE / CONVERSION types; RECYCLE's memory)
+  if(B.itemsBack)for(const [p,id] of B.itemsBack)p.held=id||null;   // (items a foe's THIEF, KNOCK OFF or TRICK took from yours come back)
   for(const p of B.foes){delete p.spirit;delete p.lowSeen;}
   if(B.trainer&&B.trainer.id==='rival1'){let fav=null,n=0;for(const m in B.usage)if(B.usage[m]>n){n=B.usage[m];fav=m;}
     SAVE.rivalMemo={starter:SAVE.starter||(SAVE.party[0]&&SAVE.party[0].k),dodges:B.habit.dodges,melee:B.habit.melee,ranged:B.habit.ranged,fav,won};}
@@ -9972,7 +9976,15 @@ function subLook(f,on){const mt=f.sp&&f.sp.mat;if(!mt)return;mt.transparent=on||
     case 'skillswap':if(!on){fail();return;}[f.trait,on.trait]=[on.trait||null,f.trait||null];blog(`${nm} swapped abilities with its target!`);return;
     case 'roleplay':if(!on||!on.trait){fail();return;}f.trait=on.trait;blog(`${nm} copied ${onm}'s ability!`);return;
     case 'transform':transformInto(f,on);return;
-    case 'batonpass':case 'trick':case 'recycle':case 'camouflage':case 'conversion':case 'conversion2':case 'sleeptalk':fail();return;
+    case 'meanlook':if(!on||on.vol.block){fail();return;}on.vol.block=f;blog(`${onm} can't escape now!`);popText(on.x,1.3+on.rad,on.z,'TRAPPED','word');return;
+    case 'thief':if(on&&!heldOf(f.p)&&heldOf(on.p)){const id=on.p.held;itemTaken(f,on);on.p.held=null;f.p.held=id;blog(`${nm} stole ${onm}'s ${ITEMS[id].n}!`);popText(f.x,1.3+f.rad,f.z,'STOLE','word');}return;
+    case 'knockoff':if(on&&heldOf(on.p)){const id=on.p.held;itemTaken(f,on);on.p.held=null;blog(`${nm} knocked off ${onm}'s ${ITEMS[id].n}!`);popText(on.x,1.3+on.rad,on.z,'KNOCKED OFF','word');}return;
+    case 'trick':{if(!on||(!heldOf(f.p)&&!heldOf(on.p))){fail();return;}const a=f.p.held||null,b=on.p.held||null;itemTaken(f,on);f.p.held=b;on.p.held=a;
+      blog(`${nm} switched items with its target!`);if(b)blog(`${nm} obtained ${ITEMS[b].n}.`);if(a)blog(`${onm} obtained ${ITEMS[a].n}.`);popText(f.x,1.3+f.rad,f.z,'TRICK','word');return;}
+    case 'recycle':if(heldOf(f.p)||!f.p.lastEaten){fail();return;}f.p.held=f.p.lastEaten;delete f.p.lastEaten;blog(`${nm} found one ${ITEMS[f.p.held].n}!`);popText(f.x,1.3+f.rad,f.z,'RECYCLE','word');return;
+    case 'camouflage':case 'conversion':case 'conversion2':{const t=newTypeFor(f,on,sp);if(!t){fail();return;}f.p.typeOvr=[t];blog(`${nm} became the ${t.toUpperCase()} type!`);popText(f.x,1.3+f.rad,f.z,t.toUpperCase(),'word');return;}
+    case 'batonpass':if(!batonBench(f).length){fail();return;}f.batonPending=true;blog(`${nm} is getting ready to pass the baton!`);return;
+    case 'sleeptalk':fail();return;   // (awake; asleep it's sleepMove below)
   }
   base(f,o,m,M,selfMove);
 };}
@@ -10005,8 +10017,9 @@ function untransform(f){const T=f.tf;if(!T)return;const p=f.p;p.k=T.k;p.moves=T.
   if(V.tick2>=3){V.tick2=0;
     if(V.ingrain&&P.hp<P.st.hp){healFighter(f,Math.max(1,Math.floor(P.st.hp/16)));blog(`${foeName(f)} absorbed nutrients with its roots!`);}
     if(V.nightmare){if(P.status==='SLP'){hurt(f,Math.max(1,Math.floor(P.st.hp/4)),null,true);blog(`${foeName(f)} is locked in a NIGHTMARE!`);}else delete V.nightmare;}
-    const k=wx(),T=typesOf(P.k);
+    const k=wx(),T=monTypes(P);
     if(k==='hail'&&!T.includes('Ice')){hurt(f,Math.max(1,Math.floor(P.st.hp/16)),null,true);blog(`${foeName(f)} is buffeted by the hail!`);}
+    if(k==='sand'&&!T.some(t=>t==='Rock'||t==='Ground'||t==='Steel')){hurt(f,Math.max(1,Math.floor(P.st.hp/16)),null,true);blog(`${foeName(f)} is buffeted by the sandstorm!`);}
   }
   if(V.perish>0){const was=Math.ceil(V.perish/3);V.perish-=dt;const now=Math.ceil(V.perish/3);
     if(now<was&&now>0)popText(f.x,1.3+f.rad,f.z,'PERISH '+now,'word');
@@ -10027,7 +10040,7 @@ function untransform(f){const T=f.tf;if(!T)return;const p=f.p;p.k=T.k;p.moves=T.
 /* SPIKES hurt whatever comes out on that side (FLYING types float over them) */
 {const base=sendOut;sendOut=async(side,p,fromTrainer,slot)=>{
   const f=await base(side,p,fromTrainer,slot),B=battle,n=B&&B.spikes&&B.spikes[side];
-  if(f&&n>0&&!typesOf(f.p.k).includes('Flying')){hurt(f,Math.max(1,Math.floor(f.p.st.hp*[0,1/8,1/6,1/4][n])),null,true);blog(`${foeName(f)} is hurt by SPIKES!`);}
+  if(f&&n>0&&!monTypes(f.p).includes('Flying')){hurt(f,Math.max(1,Math.floor(f.p.st.hp*[0,1/8,1/6,1/4][n])),null,true);blog(`${foeName(f)} is hurt by SPIKES!`);}
   return f;};}
 /* FOLLOW ME draws the foes' attacks */
 {const base=other;other=f=>{const B=battle;if(B){const L=sideOf(B,1-f.side).filter(w=>w&&w.alive&&w.out&&w.vol.followme>0);if(L.length)return L[0];}return base(f);};}
@@ -10055,7 +10068,7 @@ function untransform(f){const T=f.tf;if(!T)return;const p=f.p;p.k=T.k;p.moves=T.
     case 'detect':return hpf<0.5?12:4;
     case 'sunnyday':return wx()==='sun'?0:f.p.moves.some(k=>MOVES[k]&&MOVES[k].t==='Fire'&&isDmgMove(k))||f.p.moves.includes('solarbeam')?25:2;
     case 'raindance':return wx()==='rain'?0:f.p.moves.some(k=>MOVES[k]&&MOVES[k].t==='Water'&&isDmgMove(k))?25:2;
-    case 'hail':return wx()==='hail'?0:typesOf(f.p.k).includes('Ice')&&!typesOf(o.p.k).includes('Ice')?18:2;
+    case 'hail':return wx()==='hail'?0:monTypes(f.p).includes('Ice')&&!monTypes(o.p).includes('Ice')?18:2;
     case 'ingrain':return f.vol.ingrain?0:hpf<0.9?20:12;
     case 'destinybond':return hpf<0.25&&!f.vol.dbond?35:0;
     case 'grudge':return hpf<0.2?10:0;
@@ -10072,7 +10085,13 @@ function untransform(f){const T=f.tf;if(!T)return;const p=f.p;p.k=T.k;p.moves=T.
     case 'mudsport':return o.p.moves.some(k=>MOVES[k]&&MOVES[k].t==='Electric'&&isDmgMove(k))&&!(B&&B.mud>0)?14:0;
     case 'transform':return f.tf?0:60;
     case 'skillswap':case 'roleplay':return 4;
-    case 'batonpass':case 'trick':case 'recycle':case 'camouflage':case 'conversion':case 'conversion2':case 'sleeptalk':return 0;
+    case 'batonpass':return Object.values(f.stage).reduce((a,v)=>a+Math.max(0,v),0)>=2&&batonBench(f).length?32:0;
+    case 'trick':return heldOf(f.p)&&ITEMS[f.p.held].choice?30:!heldOf(f.p)&&o&&heldOf(o.p)?14:0;
+    case 'recycle':return !heldOf(f.p)&&f.p.lastEaten?24:0;
+    case 'camouflage':case 'conversion':case 'conversion2':{const t=newTypeFor(f,o,sp);return t&&o&&o.usedMove&&typeMult(MOVES[o.usedMove].t,[t])<typeMult(MOVES[o.usedMove].t,monTypes(f.p))?20:t?4:0;}
+    case 'sleeptalk':return 0;   // (used in its sleep: sleepMove below)
+    case 'meanlook':return o&&!o.vol.block?(battle.kind==='wild'?(o.p.hp<o.p.st.hp*0.4?12:2):6):0;
+    case 'sandstorm':return wx()==='sand'?0:monTypes(f.p).some(t=>['Rock','Ground','Steel'].includes(t))&&!(o&&monTypes(o.p).some(t=>['Rock','Ground','Steel'].includes(t)))?18:2;
   }
   return base(f,o,m,M,horizon,soon,acc,foeBest);};}
 
@@ -10095,6 +10114,64 @@ if(MOVES.moonlight&&MOVES.moonlight.t==='Fairy')MOVES.moonlight.t='Normal';
 //  POKéMON doesn't cast it again)
 MFX.futuresight={k:'self',fx:'focus'};
 {const base=moveValue;moveValue=(f,o,m)=>MOVES[m]&&MOVES[m].sp==='future'&&battle&&(battle.future||[]).some(F=>F.f===f)?0:base(f,o,m);}
+
+/* ---------- moves that used to fail every time (v23) ----------
+   MEAN LOOK / BLOCK: the target can't be switched out, run from or flee while the user stays in. SANDSTORM: weather for
+   15 s; every 3 s it hurts anything not ROCK, GROUND or STEEL by 1/16 of its max HP. THIEF / COVET take the target's held
+   item if the user has none; KNOCK OFF knocks it away for the rest of the battle; TRICK swaps the two (items a foe takes
+   from yours come back when the battle ends; what yours take, they keep). RECYCLE brings back the berry the user last
+   ate. CAMOUFLAGE turns the user into the type of the ground it's fighting on, CONVERSION into the type of one of its
+   own moves, CONVERSION 2 into a type that resists the move the target used last (until it's switched out). BATON PASS
+   switches the user out for the best POKéMON on its bench, handing over its stat stages and focus, SUBSTITUTE,
+   confusion, seeds, curses, roots, perish count and MEAN LOOK. SLEEP TALK and SNORE only work asleep: a sleeping
+   POKéMON that knows them uses them every 2-3 s (SLEEP TALK calls one of its other moves at random) */
+function itemTaken(f,on){   // (a foe's move taking an item from one of yours: it comes back after the battle)
+  const B=battle;if(!B||!on||on.side!==0||f.side===0)return;B.itemsBack=B.itemsBack||new Map();if(!B.itemsBack.has(on.p))B.itemsBack.set(on.p,on.p.held||null);
+}
+const CAMO_TYPE={field:'Grass',forest:'Grass',garden:'Grass',sea:'Water',cavesea:'Water',pool:'Water',beach:'Ground',earth:'Ground',cave:'Rock',cliff:'Rock',
+  icecave:'Ice',frost:'Ice',volcano:'Fire',dragon:'Dragon',haunt:'Ghost',tower:'Ghost',psychic:'Psychic',volt:'Electric',dojo:'Poison',karate:'Fighting',brawl:'Fighting'};
+const ALL_TYPES=['Normal','Fire','Water','Grass','Electric','Ice','Fighting','Poison','Ground','Flying','Psychic','Bug','Rock','Ghost','Dragon','Dark','Steel'];
+function newTypeFor(f,o,sp){
+  const cur=monTypes(f.p),B=battle;
+  if(sp==='camouflage'){const A=B&&B.arena||{},t=CAMO_TYPE[A.arena||A.kind]||'Normal';return cur.length===1&&cur[0]===t?null:t;}
+  if(sp==='conversion'){const L=[...new Set(f.p.moves.map(m=>MOVES[m]&&MOVES[m].t).filter(t=>t&&ALL_TYPES.includes(t)&&!cur.includes(t)))];return L.length?pick(L):null;}
+  const um=o&&o.usedMove&&MOVES[o.usedMove];if(!um)return null;   // (CONVERSION 2)
+  const L=ALL_TYPES.filter(t=>!cur.includes(t)&&typeMult(um.t,[t])<1);return L.length?pick(L):null;
+}
+const batonBench=f=>{const B=battle;if(!B)return [];const L=f.side===0?SAVE.party:(B.kind==='trainer'?B.foes:[]);return L.filter(p=>p&&p.hp>0&&!inBattle(p));};
+async function batonSwitch(B,f){
+  const side=f.side,o=other(f),pool=batonBench(f);if(!pool.length)return;
+  let best=pool[0],bv=-1e9;for(const p of pool){const v=o?benchEdge(p,o):p.hp;if(v>bv){bv=v;best=p;}}
+  const stage=Object.assign({},f.stage),keep={};for(const k of ['focus','sub','cnf','seed','curse','ingrain','perish','block'])if(f.vol[k]!=null)keep[k]=f.vol[k];
+  B.phase='event';B.busy=true;refreshCmds();
+  try{
+    blog(`${foeName(f)} passed the baton!`);const slot=f.slot||0;
+    await recall(f);clearSlot(f);await sleep(0.2);
+    const nf=await sendOut(side,best,undefined,slot);settleSlots();updatePlates(true);if(side===0)renderMoves();
+    Object.assign(nf.stage,stage);Object.assign(nf.vol,keep);if(keep.sub&&typeof subLook==='function')subLook(nf,true);
+    if(Object.values(stage).some(v=>v))blog(`${monName(best)} took over the stat changes!`);
+  }finally{B.busy=false;B.phase='fight';refreshCmds();}
+}
+function sleepMove(f,dt){
+  const B=battle,o=other(f);if(!B||B.phase!=='fight'||B.busy||!o||!o.alive||f.state==='act')return;
+  const knows=m=>f.p.moves.includes(m)&&!(f.mcd[m]>0);if(!knows('sleeptalk')&&!knows('snore'))return;
+  f.sleepCD=(f.sleepCD==null?rnd(0.8,1.6):f.sleepCD)-dt;if(f.sleepCD>0)return;f.sleepCD=rnd(2,3);
+  if(knows('sleeptalk')){
+    const pool=f.p.moves.filter(m=>m!=='sleeptalk'&&MOVES[m]&&!MOVES[m].sig&&!['semi','solar','uproar'].includes(MOVES[m].sp)&&!['focuspunch','bide','snore'].includes(m));
+    if(pool.length){const m=pick(pool);blog(`${foeName(f)} used SLEEP TALK!`);f.mcd.sleeptalk=f.mcdMax.sleeptalk=moveCool('sleeptalk');f.sleepAct=true;startAction(f,m);return;}
+  }
+  if(knows('snore')){f.sleepAct=true;startAction(f,'snore');}
+}
+{const base=endAct;endAct=f=>{f.sleepAct=false;return base(f);};}
+// (awake, SNORE and SLEEP TALK fail: the AI leaves them alone then)
+{const base=startAction;startAction=(f,m)=>{if((m==='snore'||m==='sleeptalk')&&f.p.status!=='SLP'){f.mcd[m]=f.mcdMax[m]=Math.max(8,moveCool(m));stall(f,0.45,`${foeName(f)} used ${MOVES[m].n.toUpperCase()}!\nBut it failed!`);return;}return base(f,m);};}
+{const base=moveValue;moveValue=(f,o,m)=>(m==='snore'||m==='sleeptalk')&&f.p.status!=='SLP'?0:base(f,o,m);}
+// (BATON PASS: once its own move is over, out it goes; MEAN LOOK: ends when the one who used it leaves; types: reset on the way out)
+{const base=fighterPlus;fighterPlus=(f,dt)=>{base(f,dt);const B=battle;if(!B)return;
+  if(f.vol.block&&(!f.vol.block.alive||!f.vol.block.out))delete f.vol.block;
+  if(B.sand>0&&!(B.wx&&B.wx.k==='sand'&&B.wx.t>0))B.sand=0;   // (another weather blew the sandstorm away)
+  if(f.batonPending&&f.state==='idle'&&f.alive&&!B.busy&&B.phase==='fight'){f.batonPending=false;run(()=>batonSwitch(B,f));}};}
+{const base=recall;recall=async f=>{if(f&&f.p)delete f.p.typeOvr;return base(f);};}
 
 /* ---------- 75_hazards.js ---------- */
 /* ================= harder battles: arena hazards and sharper trainers =================
@@ -10136,7 +10213,7 @@ const HAZ_OF={gym:'rocks',cave:'rocks',pool:'current',volt:'volt',garden:'spores
 /* rate: how often · dmg: how hard · home/away: how long each side takes to notice a telegraph (seconds) */
 const HZ_CFG={normal:{rate:0.6,dmg:0.75,home:0.45,away:0.5},hard:{rate:0.85,dmg:1,home:0.28,away:0.5},extreme:{rate:1.05,dmg:1.15,home:0.14,away:0.5}};
 const isBoss=T=>!!T&&(!!T.leader||T.id==='giovanni'||/^rival/.test(T.id||''));
-const hzSafe=(f,Z)=>Z.H.home?f.side===1:Z.H.safe.some(t=>typesOf(f.p.k).includes(t));
+const hzSafe=(f,Z)=>Z.H.home?f.side===1:Z.H.safe.some(t=>monTypes(f.p).includes(t));
 const HZ_PLANE=new THREE.PlaneGeometry(1,1).rotateX(-Math.PI/2);
 function groundRect(x,z,w,d,col,a,glow,map){
   const m=new THREE.Mesh(HZ_PLANE,new THREE.MeshBasicMaterial({color:col,map:map||null,transparent:true,opacity:a,depthWrite:false,blending:glow?THREE.AdditiveBlending:THREE.NormalBlending}));
@@ -10194,7 +10271,7 @@ function hzHit(B,Z,f,frac,msg,o){
   if(o.ail&&Math.random()<o.ailP)hzAil(f,o.ail);
 }
 function hzAil(f,ail){
-  const B=battle,T=typesOf(f.p.k),nm=foeName(f);
+  const B=battle,T=monTypes(f.p),nm=foeName(f);
   if(B.screens&&B.screens[f.side]&&B.screens[f.side].safe>0)return;
   if(ail==='CNF'){if(f.vol.cnf)return;f.vol.cnf=irnd(2,4);blog(`${nm} became confused!`);popText(f.x,1.2+f.rad,f.z,'CNF','word');return;}
   if(f.p.status)return;
@@ -10524,7 +10601,7 @@ function sharpUpdate(B,dt){
     if(B.foeBag&&f.p.hp<=f.p.st.hp*0.25&&B.t>B.itemAt+5){const id=Object.keys(B.foeBag).find(k=>B.foeBag[k]>0);
       if(id){B.foeBag[id]--;B.itemAt=B.t;run(()=>foeItem(B,f,id));return;}}
     // a bad matchup with a better one on the bench: switch out (HARD and EXTREME)
-    if(!sharp(B)||switchLeft(B,1)>0||(f.vol.trap&&f.vol.trap.t>0)||f.p.status==='SLP'||B.t-(f.inAt||0)<6||f.p.hp<f.p.st.hp*0.3)continue;
+    if(!sharp(B)||switchLeft(B,1)>0||(f.vol.trap&&f.vol.trap.t>0)||f.vol.block||f.p.status==='SLP'||B.t-(f.inAt||0)<6||f.p.hp<f.p.st.hp*0.3)continue;
     if(Object.values(f.stage).reduce((a,v)=>a+Math.max(0,v),0)>=2)continue;   // it's set up: keep it in
     const o=other(f);if(!o||!o.alive)continue;
     const cur=edgeOf(f,o);if(cur>-0.25)continue;
@@ -10718,17 +10795,17 @@ function heldEat(f,why){
   const p=f.p,id=heldOf(p),nm=foeName(f);
   if(HOLD_HEAL[id]){
     const amt=Math.min(HOLD_HEAL[id],p.st.hp-p.hp);if(amt<=0)return;
-    p.hp+=amt;p.held=null;sfx.heal&&sfx.heal();
+    p.hp+=amt;p.lastEaten=id;p.held=null;sfx.heal&&sfx.heal();
     blog(`${nm} ${id==='berryjuice'?'drank its':'ate its'} ${ITEMS[id].n} and restored ${amt} HP!`);popText(f.x,1.1+f.rad,f.z,'+'+amt,'heal');
     for(let i=0;i<12;i++)FX.p({x:f.x+rnd(-f.rad,f.rad),y:rnd(0,0.4),z:f.z+rnd(-0.2,0.2),vy:rnd(0.8,1.6),life:0.7,size:0.12,col:0x7cf0a0});
   }else if(HOLD_CURE[id]){
     const want=HOLD_CURE[id],cnf=want==='CNF';
     if(cnf?!(f.vol&&f.vol.cnf):(p.status!==want&&!(want==='PSN'&&p.status==='TOX')))return;
-    if(cnf)delete f.vol.cnf;else{p.status=null;if(want==='SLP'){f.sleepT=0;f.state='idle';}}p.held=null;
+    if(cnf)delete f.vol.cnf;else{p.status=null;if(want==='SLP'){f.sleepT=0;f.state='idle';}}p.lastEaten=id;p.held=null;
     blog(`${nm} ate its ${ITEMS[id].n} and ${cnf?'snapped out of confusion':'was cured'}!`);popText(f.x,1.1+f.rad,f.z,'CURED','heal');
   }else if(id==='lumberry'){
     const st=p.status,cnf=f.vol&&f.vol.cnf;if(!st&&!cnf)return;
-    p.status=null;if(f.vol)delete f.vol.cnf;if(st==='SLP'){f.sleepT=0;f.state='idle';}p.held=null;
+    p.status=null;if(f.vol)delete f.vol.cnf;if(st==='SLP'){f.sleepT=0;f.state='idle';}p.lastEaten=id;p.held=null;
     blog(`${nm} ate its LUM BERRY and ${st?'was cured':'snapped out of confusion'}!`);popText(f.x,1.1+f.rad,f.z,'CURED','heal');
   }
 }
@@ -10738,7 +10815,7 @@ function heldEat(f,why){
 function heldAfterMove(f){
   if(heldOf(f.p)!=='leppaberry'||!f.alive)return;
   if(!f.p.moves.every(m=>MOVES[m]&&MOVES[m].sig||(f.mcd[m]||0)>0.5))return;
-  for(const m of f.p.moves)f.mcd[m]=0;f.p.held=null;
+  for(const m of f.p.moves)f.mcd[m]=0;f.p.lastEaten='leppaberry';f.p.held=null;
   blog(`${foeName(f)} ate its LEPPA BERRY: its moves are ready again!`);popText(f.x,1.1+f.rad,f.z,'RECHARGED','heal');
 }
 // (QUICK CLAW: one time in five the wait before its next action is cut short)
@@ -16772,6 +16849,11 @@ rentChansey=function*(I){
 {const base=answerList;answerList=s=>{const L=labelsOf(s),W=DEMO.want;
   if(W.chansey!=null&&L.length===CHANSEY_PLANS.length+1&&/heals$/.test(L[0]))return goIndex(s,W.chansey);
   return base(s);};}
+/* MEAN LOOK / BLOCK (they work since v23): a trapped POKéMON can't run or be switched out (a SMOKE BALL still runs), so
+   the runner fights on instead of trying again and again */
+{const base=demoDecide;demoDecide=B=>{const d=base(B),me=B&&B.me;
+  if(d&&me&&(me.vol.block||(me.vol.trap&&me.vol.trap.t>0))&&(d.c==='mon'||(d.c==='run'&&heldOf(me.p)!=='smokeball')))return null;
+  return d;};}
 
 /* ---------- 98_demo_xheld.js ---------- */
 /* ================= DEMO: held items (v23) =================
