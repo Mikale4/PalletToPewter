@@ -6552,7 +6552,13 @@ async function yesNo(pages,name){return (await ask(pages,['YES','NO'],name))===0
 const UI={stack:[]};
 function uiActive(){return UI.stack.length>0;}
 function openScreen(s){return new Promise(r=>{s.resolve=r;UI.stack.push(s);if(s.open)s.open();if(s.render)s.render();});}
-function closeScreen(s,v){const i=UI.stack.indexOf(s);if(i>=0)UI.stack.splice(i,1);if(s.close)s.close();const top=UI.stack[UI.stack.length-1];if(top&&top.render)top.render();if(s.resolve)s.resolve(v);}
+function closeScreen(s,v){const i=UI.stack.indexOf(s);if(i>=0)UI.stack.splice(i,1);if(s.close)s.close();const top=UI.stack[UI.stack.length-1];
+  if(top&&top.render){
+    // the BAG and the POKéMON screens share one panel: one closing over the other (the party picked from for an item,
+    // the BAG picked from to give one) hides and empties it, so the screen under it drew into a hidden panel and the
+    // game sat on an invisible menu. Whatever the screen under it draws there now is on show again.
+    const B=$('bigPanel'),gone=B.hidden&&!B.childElementCount;top.render();if(gone&&B.childElementCount)B.hidden=false;}
+  if(s.resolve)s.resolve(v);}
 function uiInput(){
   const s=UI.stack[UI.stack.length-1];if(!s)return;
   for(const b of ['up','down','left','right','a','b','start'])if(pressed.has(b)){pressed.delete(b);if(s.key)s.key(b);return;}
@@ -6605,13 +6611,13 @@ function partyScreen(o){
     open(){el.hidden=false;},close(){el.hidden=true;el.innerHTML='';},
     render(){
       el.innerHTML='';
-      el.append(h('h2',null,o.title||'POKéMON'));
+      el.append(h('h2',null,(typeof o.title==='function'?o.title():o.title)||'POKéMON'));
       const g=h('div',{class:'party'});
       SAVE.party.forEach((p,k)=>{
         const card=h('div',{class:'mon'+(k===s.i?' sel':'')+(p.hp<=0?' fainted':'')+(k===s.mark?' mark':'')},monCanvas(p.k,56),
           h('div',{class:'n'},monName(p),h('span',{class:'lv'},'Lv'+p.lv),stTag(p.hp<=0?'FNT':p.status)),
           h('div',null,hpBar(p),h('div',{class:'hpt'},h('span',null,`HP ${p.hp}/${p.st.hp}`),o.note?h('span',null,o.note(p)||''):null)));
-        card.addEventListener('pointerdown',ev=>{ev.preventDefault();s.i=k;s.render();setTimeout(()=>s.key('a'),40);});
+        card.addEventListener('pointerdown',ev=>{ev.preventDefault();if(s.busy)return;s.i=k;s.render();setTimeout(()=>s.key('a'),40);});
         g.append(card);
       });
       el.append(g);
@@ -6619,6 +6625,7 @@ function partyScreen(o){
       el.append(h('div',{class:'keys'},'Z select · X back'));
     },
     async key(b){
+      if(s.busy)return;   // (an item still going on the one picked: its messages, a level-up, an evolution)
       const n=SAVE.party.length;if(!n){closeScreen(s,-1);return;}
       if(b==='left'||b==='up'){s.i=(s.i+n-1)%n;sfx.cursor();s.render();}
       else if(b==='right'||b==='down'){s.i=(s.i+1)%n;sfx.cursor();s.render();}
@@ -6626,6 +6633,10 @@ function partyScreen(o){
       else if(b==='a'){
         sfx.select();
         if(s.mark>=0){const a=s.mark,c=s.i;if(a!==c){[SAVE.party[a],SAVE.party[c]]=[SAVE.party[c],SAVE.party[a]];}s.mark=-1;s.render();refreshFollower();return;}
+        // o.use: an item used on the one picked while this screen stays up (useOnParty); 'done' closes it
+        // (drawn again as soon as it takes effect, so the HP bar or level has moved while its message plays)
+        if(o.use){s.busy=true;let r;try{const u=o.use(SAVE.party[s.i]);if(UI.stack[UI.stack.length-1]===s)s.render();r=await u;}finally{s.busy=false;}
+          if(!UI.stack.includes(s))return;if(r==='done')closeScreen(s,s.i);else s.render();return;}
         if(o.pick){closeScreen(s,s.i);return;}
         const p=SAVE.party[s.i],acts=['SUMMARY','SWITCH'].concat(candyOK()&&p.lv<levelCap()?['LEVEL UP']:[],['CANCEL']);
         const k=await choose(acts),pickA=acts[k];
@@ -6735,18 +6746,15 @@ async function useItemField(id){
   const I=ITEMS[id];
   if(I.stone){
     const into=p=>((DEX[p.k].evoItem||[]).find(e=>e[0]===id)||[])[1];
-    const k=await openScreen(partyScreen({pick:true,title:`Use the ${I.n} on which POKéMON?`,note:p=>into(p)?'ABLE':'NOT ABLE'}));if(k<0)return;
-    const p=SAVE.party[k],t=into(p);
-    if(!t){await say(["It won't have any effect."]);return;}
-    useItem(id);lock++;try{await fieldEvolve(p,t);}finally{lock--;}refreshFollower();return;
-  }
-  if(I.sigUp){await usePPUp(id);return;}
-  if(I.xp||I.rare||I.revive||I.heal||I.vit!=null||(I.cure&&I.cure!=='CNF')){
-    // the party screen comes back after each use, so a stack of POTIONS or candies goes out without the trip back to the BAG
-    let again=false;
-    while(hasItem(id)){if(await useOnMon(id,again)==='cancel')return;again=true;}
+    await useOnParty(id,`Use the ${I.n} on which POKéMON?`,p=>into(p)?'ABLE':'NOT ABLE',async p=>{
+      const t=into(p);if(!t){await say(["It won't have any effect."]);return 'fail';}
+      useItem(id);lock++;try{await fieldEvolve(p,t);}finally{lock--;}refreshFollower();return 'used';});
     return;
   }
+  if(I.sigUp){await usePPUp(id);return;}
+  if(I.xp||I.rare){await useOnParty(id,`Use ${I.n} on which POKéMON?`,p=>p.lv>=levelCap()?'AT CAP':'Lv '+p.lv+' → cap '+levelCap(),p=>useOnMon(id,p));return;}
+  if(I.revive){await useOnParty(id,`Use the ${I.n} on which POKéMON?`,p=>p.hp>0?'':'FAINTED',p=>useOnMon(id,p));return;}
+  if(I.heal||I.vit!=null||(I.cure&&I.cure!=='CNF')){await useOnParty(id,'Use on which POKéMON?',null,p=>useOnMon(id,p));return;}
   if(typeof useItemV20==='function'&&await useItemV20(id))return;   // the road to KOGA's key items (86_story_koga.js)
   if(I.repel){useItem(id);repelSteps=I.repel;SAVE.lastRepel=id;sfx.select();await say([`${heroName()} used the ${I.n}.`,'Weak wild POKéMON will stay away\nfor a while.']);return;}
   if(I.hm){await useHM(id);return;}
@@ -6766,33 +6774,37 @@ async function useItemField(id){
 }
 /* a PP UP or PP MAX: a POKéMON whose signature move gets faster to cast and quicker to charge (for good) */
 async function usePPUp(id){
-  const I=ITEMS[id],k=await openScreen(partyScreen({pick:true,title:`Use the ${I.n} on which POKéMON?`,note:p=>sigLevel(p)>=3?'MAX':`★ +${sigLevel(p)*10}%`}));if(k<0)return;
-  const p=SAVE.party[k],nm=MOVES[sigMove(p)].n.toUpperCase();
-  if(sigLevel(p)>=3){await say([`${monName(p)}'s ${nm} can't get any stronger.`]);return;}
-  p.sigUp=Math.min(3,sigLevel(p)+I.sigUp);useItem(id);sfx.heal();
-  await say([`${monName(p)}'s signature move ${nm}
+  const I=ITEMS[id];
+  await useOnParty(id,`Use the ${I.n} on which POKéMON?`,p=>sigLevel(p)>=3?'MAX':`★ +${sigLevel(p)*10}%`,async p=>{
+    const nm=MOVES[sigMove(p)].n.toUpperCase();
+    if(sigLevel(p)>=3){await say([`${monName(p)}'s ${nm} can't get any stronger.`]);return 'fail';}
+    p.sigUp=Math.min(3,sigLevel(p)+I.sigUp);useItem(id);sfx.heal();
+    await say([`${monName(p)}'s signature move ${nm}
 now casts ${p.sigUp*10}% faster, and its SPIRIT
-fills ${p.sigUp*10}% faster!`]);
+fills ${p.sigUp*10}% faster!`]);return 'used';});
 }
-/* one use of a medicine or candy on a POKéMON picked from the party: 'used', 'fail' (no effect) or 'cancel' */
-async function useOnMon(id,again){
-  const I=ITEMS[id],more=again&&!I.endless?` (×${SAVE.bag[id]} left)`:'';
+/* an item from the BAG used on POKéMON (medicine, candies, vitamins, stones, PP UPs): the party screen stays up after
+   each use, the cursor where it was and the count left in its title, so a stack of them goes out on the spot; it closes
+   when the last one's gone, and X goes back to the BAG. fn(p) uses one on p: 'used', or 'fail' if it had no effect */
+async function useOnParty(id,title,note,fn){
+  const I=ITEMS[id];let n=0;
+  await openScreen(partyScreen({pick:true,note,
+    title:()=>!hasItem(id)?`That was the last ${I.n}.`:n?`Use another ${I.n}?`+(I.endless?'':` (×${SAVE.bag[id]} left)`):title,   // (the last one's messages still playing)
+    use:async p=>{if(await fn(p)==='used')n++;return hasItem(id)?null:'done';}}));
+}
+/* one use of a medicine, candy or vitamin on a POKéMON: 'used', or 'fail' (no effect) */
+async function useOnMon(id,p){
+  const I=ITEMS[id];
   if(I.xp||I.rare){
-    const cap=levelCap(),k=await openScreen(partyScreen({pick:true,title:again?`Use another ${I.n}?${more}`:`Use ${I.n} on which POKéMON?`,note:p=>p.lv>=cap?'AT CAP':'Lv '+p.lv+' → cap '+cap}));if(k<0)return 'cancel';
-    const p=SAVE.party[k];
     if(p.lv>=levelCap()){await say([`${monName(p)} is at the level cap.`,capLine()]);return 'fail';}
     useItem(id);sfx.heal();
     const n=I.rare?expAt(DEX[p.k].gr,p.lv+1)-p.exp:I.xp;
     await expGainField(p,n,I.rare?null:`${monName(p)} gained ${Math.min(n,expRoom(p)).toLocaleString()} EXP. Points!`);return 'used';
   }
   if(I.revive){
-    const k=await openScreen(partyScreen({pick:true,title:again?`Use another ${I.n}?${more}`:`Use the ${I.n} on which POKéMON?`,note:p=>p.hp>0?'':'FAINTED'}));if(k<0)return 'cancel';
-    const p=SAVE.party[k];
     if(p.hp>0){await say(["It won't have any effect."]);return 'fail';}
     p.hp=Math.max(1,Math.floor(p.st.hp*I.revive));p.status=null;useItem(id);sfx.heal();await say([`${monName(p)} regained health!`]);refreshFollower();return 'used';
   }
-  const k=await openScreen(partyScreen({pick:true,title:again?`Use another ${I.n}?${more}`:'Use on which POKéMON?'}));if(k<0)return 'cancel';
-  const p=SAVE.party[k];
   if(p.hp<=0){await say(["It won't have any effect."]);return 'fail';}
   if(I.vit!=null){const i=I.vit,nm=['HP','ATTACK','DEFENSE','SP. ATK','SP. DEF','SPEED'][i];if(p.iv[i]>=31){await say([`${monName(p)}'s ${nm} can't go any higher.`]);return 'fail';}
     p.iv[i]=Math.min(31,p.iv[i]+4);refresh(p);useItem(id);sfx.heal();await say([`${monName(p)}'s ${nm} potential rose!`]);return 'used';}
