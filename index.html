@@ -14539,6 +14539,13 @@ function bestAgainst(list,foe){
 }
 function answerParty(s,h2){
   const W=DEMO.want,n=SAVE.party.length,step=t=>{if(s.i===t){demoKey('a');return true;}demoKey(((t-s.i+n)%n)<=n/2?'right':'left');return false;};
+  if(s.busy)return;   // (an item still at work on the one picked: its messages, a level-up, an evolution)
+  // the same item again, on the spot: until next() has no one left for it, or a use changed nothing (it didn't take)
+  if(/^Use another /.test(h2)&&W.item&&W.next){
+    const sig=useSig(W.item),J=sig!==W.nextSig&&(W.nextN||0)<40?W.next():null;
+    if(J&&J.i>=0){if(J.say&&J.say!==W.nextSay){W.nextSay=J.say;dsay(null,J.say);}if(step(J.i)){W.nextSig=sig;W.nextN=(W.nextN||0)+1;}return;}
+    W.next=null;
+  }
   if(/Send out/.test(h2)){const t=bestAgainst(SAVE.party.map((p,i)=>i).filter(i=>!inBattle(SAVE.party[i])),battle&&battle.foe);return step(Math.max(0,t));}
   if(/Deposit/.test(h2)){const op=(W.pc||[])[0];const j=op?SAVE.party.findIndex(p=>p.id===op.id):-1;if(j<0){demoKey('b');return;}if(step(j))W.pc.shift();return;}
   if(/^Trade which/.test(h2)){const j=SAVE.party.findIndex(p=>p.k===W.trade);if(j<0){demoKey('b');return;}step(j);return;}
@@ -14917,12 +14924,17 @@ function* healUp(){
 }
 /* open the START menu and do something visible with it */
 function* menu(want,label){
-  yield* idle();DEMO.want=Object.assign({},want);
+  yield* idle();const W=DEMO.want=Object.assign({},want);
   demoKey('start');yield;yield* waitT(0.2);
-  const t0=DEMO.t;while((uiActive()||menuOpen||lock>0)&&DEMO.t-t0<40)yield;
+  const t0=DEMO.t;while((uiActive()||menuOpen||lock>0)&&DEMO.t-t0<40+20*(W.nextN||0))yield;   // (more time for each use on the spot)
   DEMO.want={};yield* idle();
 }
-const menuUse=(id,party)=>menu({menu:'BAG',item:id,party});
+/* the BAG's item on party POKéMON i. The party screen stays up after a use (useOnParty, 60_ui.js), so next() names the
+   next one for the same item, {i, say}, and it's used again on the spot instead of the trip back through the BAG; null
+   when that item's work is done */
+const menuUse=(id,party,next)=>menu({menu:'BAG',item:id,party,next});
+/* what a use changes: the item's count and the party (to tell a use that didn't take) */
+const useSig=id=>(SAVE.bag[id]||0)+'|'+SAVE.party.map(p=>[p.k,p.lv,p.exp,p.hp,p.status,(p.iv||[]).join('.'),p.sigUp||0].join(',')).join(';');
 function* demoSave(){yield* menu({menu:'SAVE'});DEMO.savedStory=storyCount();DEMO.savedAt=SAVE.playtime;DEMO.savedReal=performance.now();}
 const storyCount=()=>STORY_STEPS.filter(([,f])=>f(SAVE)).length;
 /* like a player, it saves as it goes: right after each new story event, and otherwise every few minutes of play (but at
@@ -14984,7 +14996,9 @@ function* candiesTo(get,lv){
     const id=pickCandy(p,Math.min(lv,levelCap()));if(!id)return;
     dsay(null,`${ITEMS[id].n} for ${monName(p)} (Lv ${p.lv} → ${lv})`);
     const e0=p.exp,c0=SAVE.bag[id]||0;
-    yield* menuUse(id,SAVE.party.indexOf(p));
+    yield* menuUse(id,SAVE.party.indexOf(p),()=>{   // (the same candy again on the spot while it's still the one to use)
+      const q=get(),to=Math.min(lv,levelCap());if(!q||q.lv>=to||pickCandy(q,to)!==id)return null;
+      return {i:SAVE.party.indexOf(q),say:`${ITEMS[id].n} for ${monName(q)} (Lv ${q.lv} → ${lv})`};});
     if(p.exp===e0&&(SAVE.bag[id]||0)===c0&&++fails>=3)return;   // (three tries that change nothing: give up for now)
   }
 }
@@ -16704,13 +16718,18 @@ function evoItemFor(p){
   const score=e=>teamWorth(Object.assign({},p,{k:e[1]}),foes,cap);
   return L.slice().sort((a,b)=>score(b)-score(a))[0];
 }
+function bestStone(){
+  let best=null;
+  SAVE.party.forEach((p,i)=>{const e=evoItemFor(p);if(e&&hasItem(e[0])&&(!best||p.lv>best.p.lv))best={id:e[0],i,p,t:e[1]};});
+  if(best)best.say=`The ${ITEMS[best.id].n} for ${monName(best.p)}: it becomes ${nameOf(best.t).toUpperCase()}`;
+  return best;
+}
 function* stoneEvolve(){
   for(let guard=0;guard<12;guard++){
-    let best=null;
-    SAVE.party.forEach((p,i)=>{const e=evoItemFor(p);if(e&&hasItem(e[0])&&(!best||p.lv>best.p.lv))best={id:e[0],i,p,t:e[1]};});
+    const best=bestStone();
     if(!best)break;
-    const k0=best.p.k;dsay(null,`The ${ITEMS[best.id].n} for ${monName(best.p)}: it becomes ${nameOf(best.t).toUpperCase()}`);
-    yield* menuUse(best.id,best.i);yield* idle();
+    const k0=best.p.k;dsay(null,best.say);
+    yield* menuUse(best.id,best.i,()=>{const b=bestStone();return b&&b.id===best.id?b:null;});yield* idle();   // (the same stone on to the next one, on the spot)
     if(SAVE.party[best.i]&&SAVE.party[best.i].k===k0)return;   // (it didn't take: try again at the next CENTER)
   }
   yield* boxEvolve();
@@ -16735,7 +16754,10 @@ function* boxEvolve(){
       if(!inP().length)break;   // (the PC didn't open: the next rest tries again)
       for(const p of inP()){const e=evoItemFor(p);if(!e||!hasItem(e[0]))continue;
         dsay(null,`The ${ITEMS[e[0]].n} for ${monName(p)}: it becomes ${nameOf(e[1]).toUpperCase()}`);
-        yield* menuUse(e[0],SAVE.party.indexOf(p));yield* idle();}
+        yield* menuUse(e[0],SAVE.party.indexOf(p),()=>{   // (the same item on the batch's next one, on the spot)
+          const q=inP().find(q=>{const f=evoItemFor(q);return f&&f[0]===e[0];});
+          return q?{i:SAVE.party.indexOf(q),say:`The ${ITEMS[e[0]].n} for ${monName(q)}: it becomes ${nameOf(evoItemFor(q)[1]).toUpperCase()}`}:null;});
+        yield* idle();}
       yield* pcDo(inP().map(p=>({op:'deposit',id:p.id})).concat(out.filter(id=>SAVE.box.some(q=>q.id===id)).map(id=>({op:'withdraw',id}))),'Back in the PC: the team as it was');
       if(inP().length)break;   // (couldn't put them back: leave it there)
     }
@@ -16794,7 +16816,7 @@ function* useBoosters(){
   for(let guard=0;guard<40;guard++){
     const J=boosterJob();if(!J)return;
     const n0=SAVE.bag[J.id]||0;dsay(null,J.say);
-    yield* menuUse(J.id,J.i);yield* idle();
+    yield* menuUse(J.id,J.i,()=>{const K=boosterJob();return K&&K.id===J.id?K:null;});yield* idle();   // (the same one on, on the spot)
     if((SAVE.bag[J.id]||0)>=n0)return;   // (it didn't take: the next rest)
   }
 }
@@ -17017,16 +17039,19 @@ const BIG_FIGHTS=[
 
 /* ---------- medicine between the LEAGUE's battles (the doors are sealed: no CENTER) ---------- */
 const MEDS_HP=['fullrestore','maxpotion','hyperpotion','superpotion','potion'],MEDS_KO=['maxrevive','revive'];
+function leagueJob(){
+  for(const [i,p] of SAVE.party.entries()){
+    if(p.hp<=0){const id=MEDS_KO.find(hasItem);if(id)return [id,i];continue;}
+    if(p.hp<p.st.hp*0.75||(p.status&&hasItem('fullrestore'))){const id=MEDS_HP.find(hasItem);if(id)return [id,i];}
+  }
+  return null;
+}
 function* leagueHeal(){
   for(let guard=0;guard<14;guard++){
-    let job=null;
-    for(const [i,p] of SAVE.party.entries()){
-      if(p.hp<=0){const id=MEDS_KO.find(hasItem);if(id){job=[id,i];break;}continue;}
-      if(p.hp<p.st.hp*0.75||(p.status&&hasItem('fullrestore'))){const id=MEDS_HP.find(hasItem);if(id){job=[id,i];break;}}
-    }
+    const job=leagueJob();
     if(!job)return;
     const [id,i]=job,p=SAVE.party[i],hp0=p.hp,st0=p.status;dsay(null,`${ITEMS[id].n} for ${monName(p)}`);
-    yield* menuUse(id,i);
+    yield* menuUse(id,i,()=>{const J=leagueJob();return J&&J[0]===id?{i:J[1],say:`${ITEMS[id].n} for ${monName(SAVE.party[J[1]])}`}:null;});   // (the same medicine on, on the spot)
     if(p.hp===hp0&&p.status===st0)return;   // (it didn't take)
   }
 }
